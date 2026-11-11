@@ -15,7 +15,7 @@ import websockets
 # === КОНФИГУРАЦИЯ ===
 TV_IP = "192.168.0.103"
 TOKEN = "10718851"
-APP_NAME = "MyPythonApp"
+APP_NAME = "HomeApp"
 
 async def send_key(key_name, label=""):
     """Отправить клавишу на ТВ"""

@@ -240,7 +240,9 @@ async def volume_down():
 @app.post("/volume/set")
 @_handle_tv_errors
 async def volume_set(req: VolumeRequest):
-    await _send_key("KEY_VOLUP")
+    # Отправляем KEY_VOLUP нужное количество раз
+    for _ in range(req.level):
+        await _send_key("KEY_VOLUP")
     return {"status": "ok", "action": "volume_set", "level": req.level}
 
 
@@ -269,10 +271,8 @@ async def channel_down():
 @app.post("/channel/set")
 @_handle_tv_errors
 async def channel_set(req: ChannelRequest):
-    log.info("channel/set: number=%d", req.number)
     digit_map = {str(i): f"KEY_{i}" for i in range(10)}
     keys = [digit_map[d] for d in str(req.number)] + ["KEY_ENTER"]
-    log.info("channel/set: keys=%s", keys)
     await _send_keys(keys)
     return {"status": "ok", "action": "channel_set", "number": req.number}
 

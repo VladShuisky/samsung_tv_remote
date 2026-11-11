@@ -122,24 +122,6 @@
     font-weight: 600;
   }
 
-  /* Громкость / канал — слайдер */
-  .slider-row {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-  .slider-row button { flex: none; width: 48px; padding: 10px; font-size: 1.2rem; }
-  input[type=range] {
-    flex: 1;
-    accent-color: var(--highlight);
-  }
-  .slider-val {
-    min-width: 32px;
-    text-align: center;
-    font-size: 0.9rem;
-    color: var(--text-dim);
-  }
-
   /* Уведомление */
   .toast {
     position: fixed;
@@ -184,10 +166,9 @@
   <!-- Volume -->
   <div class="section">
     <div class="section-label">Громкость</div>
-    <div class="slider-row">
-      <button onclick="post('volume/down')">−</button>
-      <input type="range" id="volSlider" min="0" max="100" value="30" oninput="onVolSlider(this.value)">
-      <button onclick="post('volume/up')">+</button>
+    <div class="btn-row">
+      <button onclick="post('volume/down')">− Громкость −</button>
+      <button onclick="post('volume/up')">Громкость + +</button>
     </div>
     <div class="btn-row" style="margin-top:6px">
       <button onclick="post('volume/mute')">🔇 Mute</button>
@@ -268,31 +249,21 @@ async function post(path) {
 
 function digit(d) {
   if (channelDigits.length < 4) channelDigits += d;
-  console.log('[numpad] digit:', d, '→ accumulated:', channelDigits);
 }
 function clearDigits() {
   channelDigits = '';
-  console.log('[numpad] cleared');
 }
 async function digitEnter() {
-  console.log('[numpad] submit, digits:', channelDigits);
   if (!channelDigits) return;
   try {
-    const url = API + 'channel/set';
-    console.log('[numpad] POST', url, 'body:', JSON.stringify({ number: parseInt(channelDigits) }));
-    const r = await fetch(url, {
+    await fetch(API + 'channel/set', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({ number: parseInt(channelDigits) }),
     });
-    console.log('[numpad] response:', r.status, await r.text());
     toast('✅ Канал ' + channelDigits);
-  } catch(e) { console.error('[numpad] error:', e); toast('❌ ' + e.message); }
+  } catch(e) { toast('❌ ' + e.message); }
   channelDigits = '';
-}
-
-function onVolSlider(v) {
-  document.getElementById('volSlider').value = v;
 }
 
 /* toast */
