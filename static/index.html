@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Samsung TV Remote</title>
+<style>
+  :root {
+    --bg: #1a1a2e;
+    --card: #16213e;
+    --accent: #0f3460;
+    --highlight: #e94560;
+    --text: #eee;
+    --text-dim: #999;
+    --btn: #1a1a40;
+    --btn-hover: #2a2a5a;
+    --btn-active: #e94560;
+    --radius: 12px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 20px;
+  }
+  .remote {
+    background: var(--card);
+    border-radius: 24px;
+    padding: 28px;
+    width: 340px;
+    box-shadow: 0 8px 32px rgba(0,0,0,.4);
+  }
+  .remote-header {
+    text-align: center;
+    margin-bottom: 20px;
+  }
+  .remote-header h1 {
+    font-size: 1.3rem;
+    font-weight: 600;
+  }
+  .remote-header .status {
+    font-size: 0.8rem;
+    color: var(--text-dim);
+    margin-top: 4px;
+  }
+  .status-dot {
+    display: inline-block;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--highlight);
+    margin-right: 4px;
+    vertical-align: middle;
+  }
+  .status-dot.online { background: #4caf50; }
+  .status-dot.offline { background: #f44336; }
+
+  /* Секции */
+  .section {
+    margin-bottom: 16px;
+  }
+  .section-label {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-dim);
+    margin-bottom: 6px;
+    padding-left: 4px;
+  }
+  .btn-row {
+    display: flex;
+    gap: 8px;
+  }
+  .btn-row.center {
+    justify-content: center;
+  }
+
+  /* Кнопки */
+  button {
+    flex: 1;
+    padding: 14px 0;
+    border: none;
+    border-radius: var(--radius);
+    background: var(--btn);
+    color: var(--text);
+    font-size: 1.1rem;
+    cursor: pointer;
+    transition: background .15s, transform .1s;
+    user-select: none;
+  }
+  button:hover { background: var(--btn-hover); }
+  button:active { transform: scale(.96); }
+  button.power { background: var(--highlight); }
+  button.power:hover { background: #d63050; }
+
+  /* D-pad навигация */
+  .dpad {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    grid-template-rows: repeat(3, 1fr);
+    gap: 6px;
+    max-width: 200px;
+    margin: 0 auto;
+  }
+  .dpad button { padding: 12px 0; font-size: 1rem; }
+  .dpad .empty { visibility: hidden; }
+
+  /* Цифровая клавиатура */
+  .numpad {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+  }
+  .numpad button { padding: 12px 0; font-size: 1rem; }
+  .numpad .go-btn {
+    grid-column: span 3;
+    background: var(--accent);
+    font-weight: 600;
+  }
+
+  /* Громкость / канал — слайдер */
+  .slider-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .slider-row button { flex: none; width: 48px; padding: 10px; font-size: 1.2rem; }
+  input[type=range] {
+    flex: 1;
+    accent-color: var(--highlight);
+  }
+  .slider-val {
+    min-width: 32px;
+    text-align: center;
+    font-size: 0.9rem;
+    color: var(--text-dim);
+  }
+
+  /* Уведомление */
+  .toast {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%) translateY(80px);
+    background: #333;
+    color: #fff;
+    padding: 10px 24px;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    opacity: 0;
+    transition: all .3s;
+    pointer-events: none;
+  }
+  .toast.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+</style>
+</head>
+<body>
+
+<div class="remote">
+  <div class="remote-header">
+    <h1>Samsung TV Remote</h1>
+    <div class="status">
+      <span class="status-dot" id="dot"></span>
+      <span id="statusText">проверка…</span>
+    </div>
+  </div>
+
+  <!-- Power -->
+  <div class="section">
+    <div class="section-label">Питание</div>
+    <div class="btn-row">
+      <button class="power" onclick="post('power/on')">⏻ Вкл</button>
+      <button class="power" onclick="post('power/off')">⏻ Выкл</button>
+    </div>
+  </div>
+
+  <!-- Volume -->
+  <div class="section">
+    <div class="section-label">Громкость</div>
+    <div class="slider-row">
+      <button onclick="post('volume/down')">−</button>
+      <input type="range" id="volSlider" min="0" max="100" value="30" oninput="onVolSlider(this.value)">
+      <button onclick="post('volume/up')">+</button>
+    </div>
+    <div class="btn-row" style="margin-top:6px">
+      <button onclick="post('volume/mute')">🔇 Mute</button>
+    </div>
+  </div>
+
+  <!-- Channel -->
+  <div class="section">
+    <div class="section-label">Канал</div>
+    <div class="btn-row">
+      <button onclick="post('channel/up')">▲ Кан +</button>
+      <button onclick="post('channel/down')">▼ Кан −</button>
+    </div>
+  </div>
+
+  <!-- Numpad -->
+  <div class="section">
+    <div class="section-label">Номер канала</div>
+    <div class="numpad">
+      <button onclick="digit('1')">1</button>
+      <button onclick="digit('2')">2</button>
+      <button onclick="digit('3')">3</button>
+      <button onclick="digit('4')">4</button>
+      <button onclick="digit('5')">5</button>
+      <button onclick="digit('6')">6</button>
+      <button onclick="digit('7')">7</button>
+      <button onclick="digit('8')">8</button>
+      <button onclick="digit('9')">9</button>
+      <button onclick="digit('0')">0</button>
+      <button onclick="clearDigits()">C</button>
+      <button onclick="digitEnter()">OK</button>
+    </div>
+  </div>
+
+  <!-- Navigation -->
+  <div class="section">
+    <div class="section-label">Навигация</div>
+    <div class="dpad">
+      <div class="empty"></div>
+      <button onclick="post('keys/up')">▲</button>
+      <div class="empty"></div>
+      <button onclick="post('keys/left')">◀</button>
+      <button onclick="post('keys/enter')">OK</button>
+      <button onclick="post('keys/right')">▶</button>
+      <div class="empty"></div>
+      <button onclick="post('keys/down')">▼</button>
+      <div class="empty"></div>
+    </div>
+    <div class="btn-row" style="margin-top:8px">
+      <button onclick="post('keys/home')">🏠 Домой</button>
+      <button onclick="post('keys/back')">◀ Назад</button>
+      <button onclick="post('keys/menu')">☰ Меню</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const API = '';  // относительные URL к FastAPI
+let channelDigits = '';
+
+console.log('[remote] page loaded, API base:', API);
+
+/* ---- helpers ---- */
+async function post(path) {
+  console.log('[remote] POST', API + path);
+  try {
+    const r = await fetch(API + path, { method: 'POST' });
+    console.log('[remote] response', r.status, r.statusText);
+    if (!r.ok) throw new Error(r.status);
+    toast('✅ ' + path);
+  } catch (e) {
+    console.error('[remote] error', e);
+    toast('❌ ' + e.message);
+  }
+}
+
+function digit(d) {
+  if (channelDigits.length < 4) channelDigits += d;
+  console.log('[numpad] digit:', d, '→ accumulated:', channelDigits);
+}
+function clearDigits() {
+  channelDigits = '';
+  console.log('[numpad] cleared');
+}
+async function digitEnter() {
+  console.log('[numpad] submit, digits:', channelDigits);
+  if (!channelDigits) return;
+  try {
+    const url = API + 'channel/set';
+    console.log('[numpad] POST', url, 'body:', JSON.stringify({ number: parseInt(channelDigits) }));
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ number: parseInt(channelDigits) }),
+    });
+    console.log('[numpad] response:', r.status, await r.text());
+    toast('✅ Канал ' + channelDigits);
+  } catch(e) { console.error('[numpad] error:', e); toast('❌ ' + e.message); }
+  channelDigits = '';
+}
+
+function onVolSlider(v) {
+  document.getElementById('volSlider').value = v;
+}
+
+/* toast */
+let toastTimer;
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 1500);
+}
+
+/* health check */
+async function check() {
+  console.log('[remote] health check...');
+  try {
+    const r = await fetch(API + 'health');
+    console.log('[remote] health response:', r.status);
+    const d = await r.json();
+    console.log('[remote] health data:', d);
+    const dot = document.getElementById('dot');
+    const txt = document.getElementById('statusText');
+    if (d.connected) {
+      dot.className = 'status-dot online';
+      txt.textContent = 'ТВ подключен (' + d.tv + ')';
+    } else {
+      dot.className = 'status-dot offline';
+      txt.textContent = 'Нет соединения с ТВ';
+    }
+  } catch (e) {
+    console.error('[remote] health check failed:', e);
+    document.getElementById('dot').className = 'status-dot offline';
+    document.getElementById('statusText').textContent = 'Сервис недоступен';
+  }
+}
+check();
+setInterval(check, 10000);
+</script>
+</body>
+</html>
