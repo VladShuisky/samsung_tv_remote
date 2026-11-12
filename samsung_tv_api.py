@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
 Samsung TV Remote — FastAPI Service
-Одно постоянное WS-соединение с автопереподключением.
-Samsung TV запрашивает подтверждение один раз при подключении.
+Одно постоянное WS-соединение с параллельным listen() для чтения событий.
+Ожидание ms.remote.touchEnable перед отправкой мыши.
+Time = Unix timestamp в миллисекундах.
 """
 
 import asyncio
@@ -11,6 +12,7 @@ import json
 import logging
 import os
 import ssl
+import time
 from contextlib import asynccontextmanager
 
 import websockets
@@ -30,16 +32,17 @@ log = logging.getLogger("samsung-tv")
 TV_IP = "192.168.0.103"
 TV_PORT = 8002
 TOKEN = "10718851"
-APP_NAME = "MyPythonApp"
+APP_NAME = "Home208"
 
 # Таймауты
-_WS_CONNECT_TIMEOUT = 5    # секунд на подключение
-_WS_PING_INTERVAL = 30     # интервал ping-pong для проверки живости
-_WS_RECONNECT_INTERVAL = 5 # секунд между попытками переподключения
+_WS_CONNECT_TIMEOUT = 5
+_WS_PING_INTERVAL = 30
+_WS_RECONNECT_INTERVAL = 5
 
 # === СОСТОЯНИЕ ===
 _ws: websockets.ClientConnection | None = None
 _ws_connected = False
+_ws_listening = False
 _ws_lock = asyncio.Lock()
 
 
@@ -52,6 +55,22 @@ class VolumeRequest(BaseModel):
 class ChannelRequest(BaseModel):
     """Запрос на переключение канала."""
     number: int = Field(..., ge=1, le=999)
+
+
+class MouseMoveRequest(BaseModel):
+    """Запрос на перемещение мыши."""
+    x: int = Field(..., ge=0, le=3840)
+    y: int = Field(..., ge=0, le=2160)
+
+
+class MouseClickRequest(BaseModel):
+    """Запрос на клик мыши."""
+    button: str = Field(default="LeftClick", pattern="^(LeftClick|RightClick|MiddleClick)$")
+
+
+class BrowserGoToRequest(BaseModel):
+    """Запрос на открытие URL в браузере ТВ."""
+    url: str = Field(..., min_length=1, max_length=2048)
 
 
 # === WEBSOCKET СЛОЙ ===
@@ -80,6 +99,33 @@ def _remote_payload(key: str) -> str:
     })
 
 
+def _mouse_payload(cmd: str, x: int = 0, y: int = 0) -> str:
+    """Сформировать JSON для управления мышью.
+    
+    Time — Unix timestamp в секундах (float), а не миллисекундах.
+    Источник: samsungctl (ha-samsungtv-custom), метод Mouse.move().
+    """
+    if cmd == "Move":
+        params = {
+            "Cmd": "Move",
+            "Position": {
+                "x": x,
+                "y": y,
+                "Time": str(time.time()),
+            },
+            "TypeOfRemote": "ProcessMouseDevice",
+        }
+    else:
+        params = {
+            "Cmd": cmd,
+            "TypeOfRemote": "ProcessMouseDevice",
+        }
+    return json.dumps({
+        "method": "ms.remote.control",
+        "params": params,
+    })
+
+
 async def _send_key(key: str) -> None:
     """Отправить клавишу через постоянное WS-соединение."""
     async with _ws_lock:
@@ -99,9 +145,64 @@ async def _send_keys(keys: list[str]) -> None:
             await asyncio.sleep(0.3)
 
 
+async def _send_mouse(cmd: str, x: int = 0, y: int = 0) -> None:
+    """Отправить команду мыши через постоянное WS-соединение."""
+    async with _ws_lock:
+        if not _ws_connected:
+            raise RuntimeError("Нет соединения с ТВ")
+        await _ws.send(_mouse_payload(cmd, x, y))
+        await asyncio.sleep(0.05)
+
+
+def _browser_payload(url: str) -> str:
+    """Сформировать JSON для открытия URL в браузере ТВ."""
+    return json.dumps({
+        "method": "ms.channel.emit",
+        "params": {
+            "event": "ed.apps.launch",
+            "to": "host",
+            "data": {
+                "appId": "org.tizen.browser",
+                "action_type": "NATIVE_LAUNCH",
+                "metaTag": url,
+            },
+        },
+    })
+
+
+async def _send_browser(url: str) -> None:
+    """Отправить команду открытия URL в браузере ТВ."""
+    async with _ws_lock:
+        if not _ws_connected:
+            raise RuntimeError("Нет соединения с ТВ")
+        await _ws.send(_browser_payload(url))
+        await asyncio.sleep(0.5)
+
+
+async def _listen_loop() -> None:
+    """Параллельное чтение входящих сообщений от ТВ."""
+    try:
+        async for message in _ws:
+            data = json.loads(message)
+            event = data.get("params", {}).get("event", "")
+            
+            if event == "ms.remote.touchEnable":
+                log.info("✅ Мышь включена (touchEnable)")
+            
+            elif event == "ms.remote.touchDisable":
+                log.info("❌ Мышь отключена (touchDisable)")
+            
+            else:
+                log.info("TV EVENT: %s", data)
+    except websockets.exceptions.ConnectionClosed:
+        log.warning("WS connection closed during listen")
+    except Exception as e:
+        log.warning("Listen error: %s", e)
+
+
 async def _ensure_ws() -> None:
-    """Подключиться к ТВ (с таймаутом)."""
-    global _ws, _ws_connected
+    """Подключиться к ТВ (с таймаутом) и запустить listen."""
+    global _ws, _ws_connected, _ws_listening, _mouse_enabled
     async with _ws_lock:
         if _ws_connected:
             return
@@ -120,21 +221,28 @@ async def _ensure_ws() -> None:
 
 async def _reconnect_loop() -> None:
     """Переподключаться к ТВ при разрыве."""
-    global _ws_connected
+    global _ws_connected, _ws_listening
     while True:
         try:
             await _ensure_ws()
-            # Ping-pong для проверки живости соединения
+            # Запуск параллельного listen
+            if not _ws_listening:
+                _ws_listening = True
+                asyncio.create_task(_listen_loop())
+            
+            # Ping-pong для проверки живости
             while _ws_connected:
                 try:
                     await asyncio.wait_for(_ws.ping(), timeout=10)
                     await asyncio.sleep(_WS_PING_INTERVAL)
                 except Exception:
                     _ws_connected = False
+                    _ws_listening = False
                     log.warning("TV connection lost")
                     break
         except (asyncio.TimeoutError, OSError, websockets.WebSocketException) as e:
             _ws_connected = False
+            _ws_listening = False
             log.warning("Reconnect failed: %s", e)
         await asyncio.sleep(_WS_RECONNECT_INTERVAL)
 
@@ -142,7 +250,7 @@ async def _reconnect_loop() -> None:
 # === LIFESPAN ===
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _ws_connected
+    global _ws_listening
     task = asyncio.create_task(_reconnect_loop())
     yield
     task.cancel()
@@ -153,6 +261,7 @@ async def lifespan(app: FastAPI):
             except Exception:
                 pass
             _ws_connected = False
+            _ws_listening = False
 
 
 # === APP ===
@@ -277,6 +386,35 @@ async def channel_set(req: ChannelRequest):
     return {"status": "ok", "action": "channel_set", "number": req.number}
 
 
+# --- Mouse ---
+@app.post("/mouse/move")
+@_handle_tv_errors
+async def mouse_move(req: MouseMoveRequest):
+    """Переместить курсор на ТВ."""
+    await _send_mouse("Move", req.x, req.y)
+    log.info("mouse_move: x=%d y=%d", req.x, req.y)
+    return {"status": "ok", "action": "mouse_move", "x": req.x, "y": req.y}
+
+
+@app.post("/mouse/click")
+@_handle_tv_errors
+async def mouse_click(req: MouseClickRequest):
+    """Клик мышью на ТВ."""
+    await _send_mouse(req.button)
+    log.info("mouse_click: button=%s", req.button)
+    return {"status": "ok", "action": "mouse_click", "button": req.button}
+
+
+# --- Browser ---
+@app.post("/browser/go-to")
+@_handle_tv_errors
+async def browser_go_to(req: BrowserGoToRequest):
+    """Открыть URL в браузере ТВ."""
+    await _send_browser(req.url)
+    log.info("browser_go_to: url=%s", req.url)
+    return {"status": "ok", "action": "browser_go_to", "url": req.url}
+
+
 # --- Navigation ---
 @app.post("/keys/up")
 @_handle_tv_errors
@@ -338,4 +476,7 @@ async def go_menu():
 @app.get("/health")
 async def health():
     """Статус соединения с ТВ."""
-    return {"tv": TV_IP, "connected": _ws_connected}
+    return {
+        "tv": TV_IP,
+        "connected": _ws_connected,
+    }

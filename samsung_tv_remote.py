@@ -85,6 +85,39 @@ async def mute():
     """Вкл/выкл мьют"""
     await send_key("KEY_MUTE", "мьют")
 
+
+async def send_mouse(cmd, x=0, y=0, time_val=0):
+    """Отправить команду мыши на ТВ"""
+    encoded_name = base64.b64encode(APP_NAME.encode()).decode()
+    url = f"wss://{TV_IP}:8002/api/v2/channels/samsung.remote.control?name={encoded_name}&token={TOKEN}"
+    
+    ssl_context = ssl._create_unverified_context()
+    
+    try:
+        async with websockets.connect(url, ssl=ssl_context) as ws:
+            if cmd == "Move":
+                payload = json.dumps({
+                    "method": "ms.remote.control",
+                    "params": {
+                        "Cmd": "Move",
+                        "Position": {"x": x, "y": y, "Time": str(time_val)},
+                        "TypeOfRemote": "ProcessMouseDevice"
+                    }
+                })
+            else:
+                payload = json.dumps({
+                    "method": "ms.remote.control",
+                    "params": {
+                        "Cmd": cmd,
+                        "TypeOfRemote": "ProcessMouseDevice"
+                    }
+                })
+            await ws.send(payload)
+            print(f"  ✅ Мышь: {cmd} x={x} y={y}")
+            await asyncio.sleep(0.3)
+    except Exception as e:
+        print(f"  ❌ Ошибка мыши: {e}")
+
 async def menu():
     """Показать меню управления"""
     print("""
@@ -101,6 +134,10 @@ async def menu():
 ║  7 — Включить ТВ                         ║
 ║  8 — Выключить ТВ                        ║
 ║  9 — Домой                               ║
+║                                          ║
+║  A — Мышь: Move                          ║
+║  B — Мышь: LeftClick                     ║
+║  C — Мышь: RightClick                    ║
 ║  0 — Выход                               ║
 ║                                          ║
 ╚══════════════════════════════════════════╝
@@ -136,6 +173,14 @@ async def main():
             await turn_off()
         elif choice == '9':
             await send_key("KEY_HOME", "домой")
+        elif choice.upper() == 'A':
+            x = int(input("  X (0-3840): ").strip())
+            y = int(input("  Y (0-2160): ").strip())
+            await send_mouse("Move", x, y)
+        elif choice.upper() == 'B':
+            await send_mouse("LeftClick")
+        elif choice.upper() == 'C':
+            await send_mouse("RightClick")
         elif choice == '0':
             print("\n👋 До свидания!")
             break
